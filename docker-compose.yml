@@ -1,0 +1,8 @@
+services:
+  detector:
+    build: .
+    container_name: rocky_detector
+    restart: always
+    env_file: .env
+    volumes:
+      - ./snapshots:/home/pi/rocky-snapshots
