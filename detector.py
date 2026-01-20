@@ -24,20 +24,45 @@ MOTION_THRESHOLD = int(os.getenv("MOTION_THRESHOLD", "1500"))
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.65"))
 
 print("Rocky Detector Starting...")
+print(f"Active hours: {ACTIVE_START_HOUR}:00 - {ACTIVE_END_HOUR}:00")
+print(f"Motion threshold: {MOTION_THRESHOLD} pixels")
+print(f"Confidence threshold: {CONFIDENCE_THRESHOLD}")
 
+print("Loading YOLO model...")
 model = YOLO("yolov8n.pt")
-cap = cv2.VideoCapture(RTSP_URL)
-bg_subtractor = cv2.createBackgroundSubtractorMOG2()
+print("Model loaded successfully")
 
+print(f"Connecting to camera at {CAMERA_IP}...")
+cap = cv2.VideoCapture(RTSP_URL)
+if cap.isOpened():
+    print("Camera connected successfully")
+else:
+    print("Warning: Failed to connect to camera")
+
+print("Initializing background subtractor...")
+bg_subtractor = cv2.createBackgroundSubtractorMOG2()
+print("Ready to detect Rocky!")
+
+in_active_hours = True
 while True:
     # Check active hours
     current_hour = datetime.now().hour
     if current_hour < ACTIVE_START_HOUR or current_hour >= ACTIVE_END_HOUR:
+        if in_active_hours:
+            print(f"Outside active hours (current: {current_hour}:00), pausing monitoring...")
+            in_active_hours = False
         time.sleep(10)
         continue
+    else:
+        if not in_active_hours:
+            print(f"Entering active hours (current: {current_hour}:00), resuming monitoring...")
+            in_active_hours = True
 
     ret, frame = cap.read()
     if not ret:
+        print("Failed to read frame, attempting to reconnect...")
+        cap.release()
+        cap = cv2.VideoCapture(RTSP_URL)
         time.sleep(1)
         continue
 
@@ -76,5 +101,5 @@ while True:
                     except Exception as e:
                         print(f"Failed to send detection: {e}")
                 else:
-                    print("COnfidence threshold not met")
+                    print("Confidence threshold not met")
     time.sleep(0.2)  # 5 FPS
