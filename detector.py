@@ -47,6 +47,7 @@ while True:
 
     if motion_pixels > MOTION_THRESHOLD:
         # YOLO detection
+        print("Motion detected...")
         results = model(frame, classes=[15])
 
         for result in results:
@@ -55,7 +56,7 @@ while True:
 
                 if confidence > CONFIDENCE_THRESHOLD:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
-
+                    print("Cat detected...")
                     # Save snapshot
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     snapshot_path = f"~/rocky-snapshots/rocky_{timestamp}.jpg"
@@ -74,5 +75,6 @@ while True:
                         print(f"Detection sent ({confidence:.2f})")
                     except Exception as e:
                         print(f"Failed to send detection: {e}")
-
+                else:
+                    print("COnfidence threshold not met")
     time.sleep(0.2)  # 5 FPS
