@@ -42,9 +42,10 @@ if cap.isOpened():
 else:
     print("Warning: Failed to connect to camera")
 
-print("Initializing background subtractor...")
-bg_subtractor = cv2.createBackgroundSubtractorMOG2()
 print("Ready to detect Rocky!")
+
+frame_count = 0
+detection_count = 0
 
 in_active_hours = True
 while True:
@@ -73,43 +74,45 @@ while True:
         time.sleep(1)
         continue
 
-    # Motion detection
-    fg_mask = bg_subtractor.apply(frame)
-    motion_pixels = cv2.countNonZero(fg_mask)
+    frame_count += 1
 
-    if motion_pixels > MOTION_THRESHOLD:
-        # YOLO detection
-        print("Motion detected...")
-        results = model(frame, classes=[15])
+    # Process every 10th frame for efficiency
+    if frame_count % 10 != 0:
+        continue
 
-        for result in results:
-            for box in result.boxes:
-                confidence = float(box.conf[0])
+    # YOLO detection (motion detection disabled)
+    results = model(frame, classes=[15], verbose=False)
 
-                if confidence > CONFIDENCE_THRESHOLD:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    print("Cat detected...")
-                    # Save snapshot
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    snapshot_path = os.path.join(
-                        "/home/pi/rocky-snapshots", f"rocky_{timestamp}.jpg"
-                    )
-                    os.makedirs("/home/pi/rocky-snapshots", exist_ok=True)
-                    cv2.imwrite(snapshot_path, frame)
+    for result in results:
+        for box in result.boxes:
+            confidence = float(box.conf[0])
 
-                    # Send to microservice
-                    detection = {
-                        "timestamp": datetime.now().isoformat(),
-                        "confidence": confidence,
-                        "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
-                        "snapshot_path": snapshot_path,
-                    }
+            if confidence > CONFIDENCE_THRESHOLD:
+                detection_count += 1
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-                    try:
-                        requests.post(MICROSERVICE_URL, json=detection, timeout=2)
-                        print(f"Detection sent ({confidence:.2f})")
-                    except Exception as e:
-                        print(f"Failed to send detection: {e}")
-                else:
-                    print("Confidence threshold not met")
-    time.sleep(0.2)  # 5 FPS
+                print(f"[{timestamp}] Cat detected! Confidence: {confidence:.2f}")
+
+                # Save snapshot
+                snapshot_path = os.path.join(
+                    SNAPSHOTS_DIR, f"rocky_{timestamp}.jpg"
+                )
+                cv2.imwrite(snapshot_path, frame)
+
+                # Send to microservice
+                detection = {
+                    "timestamp": datetime.now().isoformat(),
+                    "confidence": confidence,
+                    "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                    "snapshot_path": snapshot_path,
+                }
+
+                try:
+                    requests.post(MICROSERVICE_URL, json=detection, timeout=2)
+                    print(f"  Detection sent successfully")
+                except Exception as e:
+                    print(f"  Failed to send detection: {e}")
+
+    if frame_count % 100 == 0:
+        print(f"[Status] Frames processed: {frame_count}, Detections: {detection_count}")
