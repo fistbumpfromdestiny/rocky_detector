@@ -8,6 +8,9 @@ import cv2
 import requests
 from ultralytics import YOLO
 
+SNAPSHOTS_DIR = "/home/pi/rocky-snapshots"
+os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
+
 # Configuration
 CAMERA_IP = os.getenv("CAMERA_IP")
 USERNAME = os.getenv("CAMERA_USER")
@@ -49,13 +52,17 @@ while True:
     current_hour = datetime.now().hour
     if current_hour < ACTIVE_START_HOUR or current_hour >= ACTIVE_END_HOUR:
         if in_active_hours:
-            print(f"Outside active hours (current: {current_hour}:00), pausing monitoring...")
+            print(
+                f"Outside active hours (current: {current_hour}:00), pausing monitoring..."
+            )
             in_active_hours = False
         time.sleep(10)
         continue
     else:
         if not in_active_hours:
-            print(f"Entering active hours (current: {current_hour}:00), resuming monitoring...")
+            print(
+                f"Entering active hours (current: {current_hour}:00), resuming monitoring..."
+            )
             in_active_hours = True
 
     ret, frame = cap.read()
@@ -84,7 +91,10 @@ while True:
                     print("Cat detected...")
                     # Save snapshot
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    snapshot_path = f"~/rocky-snapshots/rocky_{timestamp}.jpg"
+                    snapshot_path = os.path.join(
+                        "/home/pi/rocky-snapshots", f"rocky_{timestamp}.jpg"
+                    )
+                    os.makedirs("/home/pi/rocky-snapshots", exist_ok=True)
                     cv2.imwrite(snapshot_path, frame)
 
                     # Send to microservice
