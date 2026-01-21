@@ -27,7 +27,7 @@ MOTION_THRESHOLD = int(os.getenv("MOTION_THRESHOLD", "1500"))
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.65"))
 
 # Session management: how long (in seconds) without detection before starting a new session
-SESSION_TIMEOUT = int(os.getenv("SESSION_TIMEOUT", "60"))
+SESSION_TIMEOUT = int(os.getenv("SESSION_TIMEOUT", "300"))  # 5 minutes (matches monitor)
 # How often to update the picture during an active session (in seconds)
 PICTURE_UPDATE_INTERVAL = int(os.getenv("PICTURE_UPDATE_INTERVAL", "300"))  # 5 minutes
 
