@@ -31,10 +31,15 @@ SESSION_TIMEOUT = int(os.getenv("SESSION_TIMEOUT", "300"))  # 5 minutes (matches
 # How often to update the picture during an active session (in seconds)
 PICTURE_UPDATE_INTERVAL = int(os.getenv("PICTURE_UPDATE_INTERVAL", "300"))  # 5 minutes
 
+# Performance tuning for Raspberry Pi
+FRAME_SKIP_RATIO = int(os.getenv("FRAME_SKIP_RATIO", "60"))  # Process every Nth frame
+FRAME_DELAY = float(os.getenv("FRAME_DELAY", "0.1"))  # Delay between frames in seconds
+
 print("Rocky Detector Starting...")
 print(f"Active hours: {ACTIVE_START_HOUR}:00 - {ACTIVE_END_HOUR}:00")
 print(f"Motion threshold: {MOTION_THRESHOLD} pixels")
 print(f"Confidence threshold: {CONFIDENCE_THRESHOLD}")
+print(f"Performance: Processing every {FRAME_SKIP_RATIO} frames, {FRAME_DELAY}s delay")
 
 print("Loading YOLO model...")
 model = YOLO("yolov8n.pt")
@@ -87,8 +92,9 @@ while True:
 
     frame_count += 1
 
-    # Process every 10th frame for efficiency
-    if frame_count % 10 != 0:
+    # Process every Nth frame for efficiency
+    if frame_count % FRAME_SKIP_RATIO != 0:
+        time.sleep(FRAME_DELAY)
         continue
 
     # YOLO detection (motion detection disabled)
