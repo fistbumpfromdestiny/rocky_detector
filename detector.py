@@ -104,10 +104,17 @@ while True:
         for box in result.boxes:
             confidence = float(box.conf[0])
 
+            # Log detections that didn't meet threshold
+            if confidence <= CONFIDENCE_THRESHOLD:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] Cat detected but confidence too low: {confidence:.2f} (threshold: {CONFIDENCE_THRESHOLD})")
+                continue
+
             if confidence > CONFIDENCE_THRESHOLD:
                 current_time = time.time()
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                timestamp_readable = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                timestamp_file = datetime.now().strftime("%Y%m%d_%H%M%S")
 
                 # Check if this is a new detection session
                 is_new_session = (
@@ -117,7 +124,7 @@ while True:
 
                 if is_new_session:
                     detection_count += 1
-                    print(f"[{timestamp}] NEW SESSION - Cat detected! Confidence: {confidence:.2f}")
+                    print(f"[{timestamp_readable}] NEW SESSION - Cat detected! Confidence: {confidence:.2f}")
 
                     # Delete old snapshot if it exists
                     if current_snapshot_path and os.path.exists(current_snapshot_path):
@@ -126,7 +133,7 @@ while True:
 
                     # Save new snapshot
                     snapshot_path = os.path.join(
-                        SNAPSHOTS_DIR, f"rocky_{timestamp}.jpg"
+                        SNAPSHOTS_DIR, f"rocky_{timestamp_file}.jpg"
                     )
                     cv2.imwrite(snapshot_path, frame)
                     current_snapshot_path = snapshot_path
@@ -152,7 +159,7 @@ while True:
                     # Still in same session - check if we should update the picture
                     time_since_last_update = current_time - last_picture_update_time
                     if time_since_last_update >= PICTURE_UPDATE_INTERVAL:
-                        print(f"[{timestamp}] Session active - Updating snapshot (confidence: {confidence:.2f})")
+                        print(f"[{timestamp_readable}] Session active - Updating snapshot (confidence: {confidence:.2f})")
                         cv2.imwrite(current_snapshot_path, frame)
                         last_picture_update_time = current_time
 
@@ -173,9 +180,10 @@ while True:
                     else:
                         # Just log that we still see the cat, no picture update
                         minutes_until_update = int((PICTURE_UPDATE_INTERVAL - time_since_last_update) / 60)
-                        print(f"[{timestamp}] Session active - Cat still detected (next update in ~{minutes_until_update}m)")
+                        print(f"[{timestamp_readable}] Session active - Cat still detected (next update in ~{minutes_until_update}m)")
 
                 last_detection_time = current_time
 
     if frame_count % 100 == 0:
-        print(f"[Status] Frames processed: {frame_count}, Detections: {detection_count}")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] [Status] Frames processed: {frame_count}, Detections: {detection_count}")
