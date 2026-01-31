@@ -140,16 +140,17 @@ while True:
                     last_picture_update_time = current_time
 
                     # Send to microservice
+                    with open(snapshot_path, "rb") as f:
+                        snapshot_base64 = base64.b64encode(f.read()).decode("utf-8")
+
                     detection = {
                         "timestamp": datetime.now().isoformat(),
                         "confidence": confidence,
-                        "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
-                        "snapshot_path": snapshot_path,
-                        "is_new_session": True,
+                        "snapshot_base64": snapshot_base64,
                     }
 
                     try:
-                        requests.post(MICROSERVICE_URL, json=detection, timeout=2)
+                        requests.post(MICROSERVICE_URL, json=detection, timeout=5)
                         print(f"  Detection sent successfully")
                     except Exception as e:
                         print(f"  Failed to send detection: {e}")
@@ -164,16 +165,17 @@ while True:
                         last_picture_update_time = current_time
 
                         # Send updated picture to microservice
+                        with open(current_snapshot_path, "rb") as f:
+                            snapshot_base64 = base64.b64encode(f.read()).decode("utf-8")
+
                         detection = {
                             "timestamp": datetime.now().isoformat(),
                             "confidence": confidence,
-                            "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
-                            "snapshot_path": current_snapshot_path,
-                            "is_new_session": False,
+                            "snapshot_base64": snapshot_base64,
                         }
 
                         try:
-                            requests.post(MICROSERVICE_URL, json=detection, timeout=2)
+                            requests.post(MICROSERVICE_URL, json=detection, timeout=5)
                             print(f"  Updated snapshot sent successfully")
                         except Exception as e:
                             print(f"  Failed to send updated snapshot: {e}")
