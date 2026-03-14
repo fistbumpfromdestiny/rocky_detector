@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
-    torch==2.1.2 torchvision==0.16.2 \
+    "torch<2.10" \
     ultralytics \
     opencv-python-headless \
     requests \
