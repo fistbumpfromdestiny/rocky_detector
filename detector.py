@@ -35,15 +35,49 @@ PICTURE_UPDATE_INTERVAL = int(os.getenv("PICTURE_UPDATE_INTERVAL", "300"))  # 5 
 FRAME_SKIP_RATIO = int(os.getenv("FRAME_SKIP_RATIO", "60"))  # Process every Nth frame
 FRAME_DELAY = float(os.getenv("FRAME_DELAY", "0.1"))  # Delay between frames in seconds
 
+# Camera failure alerting
+ALERT_URL = os.getenv("ALERT_URL")
+CAMERA_FAILURE_GRACE_PERIOD = int(os.getenv("CAMERA_FAILURE_GRACE_PERIOD", "60"))
+ALERT_REMINDER_INTERVAL = int(os.getenv("ALERT_REMINDER_INTERVAL", "3600"))
+# Reconnect pacing: fast retries before a failure is declared, slow after
+RECONNECT_DELAY_NORMAL = 1
+RECONNECT_DELAY_DECLARED = 30
+
 print("Rocky Detector Starting...")
 print(f"Active hours: {ACTIVE_START_HOUR}:00 - {ACTIVE_END_HOUR}:00")
 print(f"Motion threshold: {MOTION_THRESHOLD} pixels")
 print(f"Confidence threshold: {CONFIDENCE_THRESHOLD}")
 print(f"Performance: Processing every {FRAME_SKIP_RATIO} frames, {FRAME_DELAY}s delay")
+if ALERT_URL:
+    print(f"Camera failure alerting enabled: {ALERT_URL}")
+else:
+    print("Warning: ALERT_URL not set, camera failure alerting is disabled")
+
+
+def send_alert(event_type, message, failure_duration_seconds):
+    if not ALERT_URL:
+        return
+    alert = {
+        "event_type": event_type,
+        "timestamp": datetime.now().isoformat(),
+        "camera_ip": CAMERA_IP,
+        "message": message,
+        "failure_duration_seconds": int(failure_duration_seconds),
+    }
+    try:
+        requests.post(ALERT_URL, json=alert, timeout=5)
+        print(f"  Alert sent: {event_type}")
+    except Exception as e:
+        print(f"  Failed to send alert ({event_type}): {e}")
 
 print("Loading YOLO model...")
 model = YOLO("yolov8n.pt")
 print("Model loaded successfully")
+
+# Camera failure tracking
+failure_start_time = None
+failure_declared = False
+last_alert_time = None
 
 print(f"Connecting to camera at {CAMERA_IP}...")
 cap = cv2.VideoCapture(RTSP_URL)
@@ -51,6 +85,7 @@ if cap.isOpened():
     print("Camera connected successfully")
 else:
     print("Warning: Failed to connect to camera")
+    failure_start_time = time.time()
 
 print("Ready to detect Rocky!")
 
@@ -84,11 +119,48 @@ while True:
 
     ret, frame = cap.read()
     if not ret:
+        current_time = time.time()
+        if failure_start_time is None:
+            failure_start_time = current_time
+        failure_duration = current_time - failure_start_time
+
+        if not failure_declared and failure_duration >= CAMERA_FAILURE_GRACE_PERIOD:
+            failure_declared = True
+            last_alert_time = current_time
+            print(f"Camera unreachable for {int(failure_duration)}s, declaring connection failure")
+            send_alert(
+                "camera_failure",
+                f"Camera at {CAMERA_IP} has been unreachable for {int(failure_duration)}s. "
+                "Its IP address may have changed and needs to be updated.",
+                failure_duration,
+            )
+        elif failure_declared and current_time - last_alert_time >= ALERT_REMINDER_INTERVAL:
+            last_alert_time = current_time
+            send_alert(
+                "camera_failure",
+                f"Camera at {CAMERA_IP} is still unreachable after {int(failure_duration)}s. "
+                "Its IP address may have changed and needs to be updated.",
+                failure_duration,
+            )
+
         print("Failed to read frame, attempting to reconnect...")
         cap.release()
         cap = cv2.VideoCapture(RTSP_URL)
-        time.sleep(1)
+        time.sleep(RECONNECT_DELAY_DECLARED if failure_declared else RECONNECT_DELAY_NORMAL)
         continue
+
+    if failure_start_time is not None:
+        if failure_declared:
+            outage_duration = time.time() - failure_start_time
+            print(f"Camera connection restored after {int(outage_duration)}s outage")
+            send_alert(
+                "camera_recovered",
+                f"Camera at {CAMERA_IP} is reachable again after an outage of {int(outage_duration)}s.",
+                outage_duration,
+            )
+        failure_start_time = None
+        failure_declared = False
+        last_alert_time = None
 
     frame_count += 1
 
