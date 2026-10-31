@@ -4,5 +4,9 @@ services:
     container_name: rocky_detector
     restart: always
     env_file: .env
-    volumes:
-      - ./snapshots:/home/pi/rocky-snapshots
+    # Cap stored logs so they can't fill the SD card
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"

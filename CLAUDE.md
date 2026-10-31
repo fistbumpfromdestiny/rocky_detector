@@ -41,7 +41,7 @@ TP-Link Camera (RTSP) → Frame Capture → YOLO Inference → Session Managemen
 3. Checks active hours window before processing
 4. Runs YOLO detection for cat class with confidence threshold
 5. Groups detections into sessions (SESSION_TIMEOUT between events)
-6. Captures snapshot on first detection + periodic updates (PICTURE_UPDATE_INTERVAL)
+6. Captures snapshot on first detection + periodic updates (PICTURE_UPDATE_INTERVAL), JPEG-encoded in memory (never written to disk)
 7. POSTs base64-encoded image + metadata to MICROSERVICE_URL
 
 **Configuration via .env:**
@@ -55,6 +55,7 @@ TP-Link Camera (RTSP) → Frame Capture → YOLO Inference → Session Managemen
 - `ALERT_URL` - Endpoint for camera failure/recovery alert events (unset = alerting disabled)
 - `CAMERA_FAILURE_GRACE_PERIOD` - Seconds of continuous connection failure before an alert (default 60)
 - `ALERT_REMINDER_INTERVAL` - Seconds between reminder alerts during an outage (default 3600)
+- `LOG_LEVEL` - `info` (default, only meaningful events) or `debug` (verbose diagnostics; use temporarily, it increases SD card writes)
 
 ## Dependencies
 
@@ -64,4 +65,4 @@ TP-Link Camera (RTSP) → Frame Capture → YOLO Inference → Session Managemen
 - requests
 - python-dotenv
 
-Snapshots saved to `/home/pi/rocky-snapshots/` (Docker volume mount).
+Runs on an SD card, so disk writes are kept minimal: quiet logging by default, no snapshot files, and Docker logs capped (json-file, 1m x 3) in `docker-compose.yml`.

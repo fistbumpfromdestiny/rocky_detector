@@ -1,15 +1,30 @@
 import base64
 import json
+import logging
 import os
 import time
 from datetime import datetime
+
+# OpenCV/FFmpeg read these when cv2 is imported, so they must be set before the import.
+# setdefault lets an explicit value in .env override the quiet defaults.
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")  # AV_LOG_QUIET
 
 import cv2
 import requests
 from ultralytics import YOLO
 
-SNAPSHOTS_DIR = "/home/pi/rocky-snapshots"
-os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
+# Logging: "info" logs only meaningful events (SD card friendly), "debug" adds diagnostics
+LOG_LEVEL = os.getenv("LOG_LEVEL", "info").lower()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("rocky_detector")
+log.setLevel(logging.DEBUG if LOG_LEVEL == "debug" else logging.INFO)
+if LOG_LEVEL not in ("info", "debug"):
+    log.warning(f"Unknown LOG_LEVEL '{LOG_LEVEL}', falling back to info")
 
 # Configuration
 CAMERA_IP = os.getenv("CAMERA_IP")
@@ -23,7 +38,6 @@ ACTIVE_START_HOUR = int(os.getenv("ACTIVE_START_HOUR", "7"))
 ACTIVE_END_HOUR = int(os.getenv("ACTIVE_END_HOUR", "23"))
 
 # Detection thresholds
-MOTION_THRESHOLD = int(os.getenv("MOTION_THRESHOLD", "1500"))
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.65"))
 
 # Session management: how long (in seconds) without detection before starting a new session
@@ -43,15 +57,13 @@ ALERT_REMINDER_INTERVAL = int(os.getenv("ALERT_REMINDER_INTERVAL", "3600"))
 RECONNECT_DELAY_NORMAL = 1
 RECONNECT_DELAY_DECLARED = 30
 
-print("Rocky Detector Starting...")
-print(f"Active hours: {ACTIVE_START_HOUR}:00 - {ACTIVE_END_HOUR}:00")
-print(f"Motion threshold: {MOTION_THRESHOLD} pixels")
-print(f"Confidence threshold: {CONFIDENCE_THRESHOLD}")
-print(f"Performance: Processing every {FRAME_SKIP_RATIO} frames, {FRAME_DELAY}s delay")
-if ALERT_URL:
-    print(f"Camera failure alerting enabled: {ALERT_URL}")
-else:
-    print("Warning: ALERT_URL not set, camera failure alerting is disabled")
+log.info(
+    f"Rocky Detector starting (active {ACTIVE_START_HOUR}:00-{ACTIVE_END_HOUR}:00, "
+    f"confidence > {CONFIDENCE_THRESHOLD}, every {FRAME_SKIP_RATIO} frames, "
+    f"alerting {'on' if ALERT_URL else 'off'}, log level {logging.getLevelName(log.level).lower()})"
+)
+if not ALERT_URL:
+    log.warning("ALERT_URL not set, camera failure alerting is disabled")
 
 
 def send_alert(event_type, message, failure_duration_seconds):
@@ -66,28 +78,48 @@ def send_alert(event_type, message, failure_duration_seconds):
     }
     try:
         requests.post(ALERT_URL, json=alert, timeout=5)
-        print(f"  Alert sent: {event_type}")
+        log.debug(f"Alert sent: {event_type}")
     except Exception as e:
-        print(f"  Failed to send alert ({event_type}): {e}")
+        log.error(f"Failed to send alert ({event_type}): {e}")
 
-print("Loading YOLO model...")
+
+def send_detection(frame, confidence):
+    # Encode in memory: snapshots never touch the SD card
+    ok, jpeg = cv2.imencode(".jpg", frame)
+    if not ok:
+        log.error("Failed to encode snapshot, skipping detection")
+        return
+
+    detection = {
+        "timestamp": datetime.now().isoformat(),
+        "confidence": confidence,
+        "snapshot_base64": base64.b64encode(jpeg.tobytes()).decode("utf-8"),
+    }
+
+    try:
+        requests.post(MICROSERVICE_URL, json=detection, timeout=5)
+        log.debug("Detection sent successfully")
+    except Exception as e:
+        log.error(f"Failed to send detection: {e}")
+
+log.debug("Loading YOLO model...")
 model = YOLO("yolov8n.pt")
-print("Model loaded successfully")
+log.debug("Model loaded successfully")
 
 # Camera failure tracking
 failure_start_time = None
 failure_declared = False
 last_alert_time = None
 
-print(f"Connecting to camera at {CAMERA_IP}...")
+log.debug(f"Connecting to camera at {CAMERA_IP}...")
 cap = cv2.VideoCapture(RTSP_URL)
 if cap.isOpened():
-    print("Camera connected successfully")
+    log.debug("Camera connected successfully")
 else:
-    print("Warning: Failed to connect to camera")
+    log.debug("Failed to connect to camera")
     failure_start_time = time.time()
 
-print("Ready to detect Rocky!")
+log.info("Ready to detect Rocky!")
 
 frame_count = 0
 detection_count = 0
@@ -95,7 +127,6 @@ detection_count = 0
 # Session tracking
 last_detection_time = None
 last_picture_update_time = None
-current_snapshot_path = None
 in_detection_session = False
 
 in_active_hours = True
@@ -104,7 +135,7 @@ while True:
     current_hour = datetime.now().hour
     if current_hour < ACTIVE_START_HOUR or current_hour >= ACTIVE_END_HOUR:
         if in_active_hours:
-            print(
+            log.info(
                 f"Outside active hours (current: {current_hour}:00), pausing monitoring..."
             )
             in_active_hours = False
@@ -112,7 +143,7 @@ while True:
         continue
     else:
         if not in_active_hours:
-            print(
+            log.info(
                 f"Entering active hours (current: {current_hour}:00), resuming monitoring..."
             )
             in_active_hours = True
@@ -127,7 +158,7 @@ while True:
         if not failure_declared and failure_duration >= CAMERA_FAILURE_GRACE_PERIOD:
             failure_declared = True
             last_alert_time = current_time
-            print(f"Camera unreachable for {int(failure_duration)}s, declaring connection failure")
+            log.warning(f"Camera unreachable for {int(failure_duration)}s, declaring connection failure")
             send_alert(
                 "camera_failure",
                 f"Camera at {CAMERA_IP} has been unreachable for {int(failure_duration)}s. "
@@ -143,7 +174,7 @@ while True:
                 failure_duration,
             )
 
-        print("Failed to read frame, attempting to reconnect...")
+        log.debug("Failed to read frame, attempting to reconnect...")
         cap.release()
         cap = cv2.VideoCapture(RTSP_URL)
         time.sleep(RECONNECT_DELAY_DECLARED if failure_declared else RECONNECT_DELAY_NORMAL)
@@ -152,7 +183,7 @@ while True:
     if failure_start_time is not None:
         if failure_declared:
             outage_duration = time.time() - failure_start_time
-            print(f"Camera connection restored after {int(outage_duration)}s outage")
+            log.info(f"Camera connection restored after {int(outage_duration)}s outage")
             send_alert(
                 "camera_recovered",
                 f"Camera at {CAMERA_IP} is reachable again after an outage of {int(outage_duration)}s.",
@@ -178,15 +209,11 @@ while True:
 
             # Log detections that didn't meet threshold
             if confidence <= CONFIDENCE_THRESHOLD:
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                print(f"[{timestamp}] Cat detected but confidence too low: {confidence:.2f} (threshold: {CONFIDENCE_THRESHOLD})")
+                log.debug(f"Cat detected but confidence too low: {confidence:.2f} (threshold: {CONFIDENCE_THRESHOLD})")
                 continue
 
             if confidence > CONFIDENCE_THRESHOLD:
                 current_time = time.time()
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                timestamp_readable = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                timestamp_file = datetime.now().strftime("%Y%m%d_%H%M%S")
 
                 # Check if this is a new detection session
                 is_new_session = (
@@ -196,68 +223,23 @@ while True:
 
                 if is_new_session:
                     detection_count += 1
-                    print(f"[{timestamp_readable}] NEW SESSION - Cat detected! Confidence: {confidence:.2f}")
-
-                    # Delete old snapshot if it exists
-                    if current_snapshot_path and os.path.exists(current_snapshot_path):
-                        os.remove(current_snapshot_path)
-                        print(f"  Removed old snapshot")
-
-                    # Save new snapshot
-                    snapshot_path = os.path.join(
-                        SNAPSHOTS_DIR, f"rocky_{timestamp_file}.jpg"
-                    )
-                    cv2.imwrite(snapshot_path, frame)
-                    current_snapshot_path = snapshot_path
+                    log.info(f"NEW SESSION - Cat detected! Confidence: {confidence:.2f}")
                     last_picture_update_time = current_time
-
-                    # Send to microservice
-                    with open(snapshot_path, "rb") as f:
-                        snapshot_base64 = base64.b64encode(f.read()).decode("utf-8")
-
-                    detection = {
-                        "timestamp": datetime.now().isoformat(),
-                        "confidence": confidence,
-                        "snapshot_base64": snapshot_base64,
-                    }
-
-                    try:
-                        requests.post(MICROSERVICE_URL, json=detection, timeout=5)
-                        print(f"  Detection sent successfully")
-                    except Exception as e:
-                        print(f"  Failed to send detection: {e}")
-
+                    send_detection(frame, confidence)
                     in_detection_session = True
                 else:
                     # Still in same session - check if we should update the picture
                     time_since_last_update = current_time - last_picture_update_time
                     if time_since_last_update >= PICTURE_UPDATE_INTERVAL:
-                        print(f"[{timestamp_readable}] Session active - Updating snapshot (confidence: {confidence:.2f})")
-                        cv2.imwrite(current_snapshot_path, frame)
+                        log.debug(f"Session active - Updating snapshot (confidence: {confidence:.2f})")
                         last_picture_update_time = current_time
-
-                        # Send updated picture to microservice
-                        with open(current_snapshot_path, "rb") as f:
-                            snapshot_base64 = base64.b64encode(f.read()).decode("utf-8")
-
-                        detection = {
-                            "timestamp": datetime.now().isoformat(),
-                            "confidence": confidence,
-                            "snapshot_base64": snapshot_base64,
-                        }
-
-                        try:
-                            requests.post(MICROSERVICE_URL, json=detection, timeout=5)
-                            print(f"  Updated snapshot sent successfully")
-                        except Exception as e:
-                            print(f"  Failed to send updated snapshot: {e}")
+                        send_detection(frame, confidence)
                     else:
                         # Just log that we still see the cat, no picture update
                         minutes_until_update = int((PICTURE_UPDATE_INTERVAL - time_since_last_update) / 60)
-                        print(f"[{timestamp_readable}] Session active - Cat still detected (next update in ~{minutes_until_update}m)")
+                        log.debug(f"Session active - Cat still detected (next update in ~{minutes_until_update}m)")
 
                 last_detection_time = current_time
 
     if frame_count % 100 == 0:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] [Status] Frames processed: {frame_count}, Detections: {detection_count}")
+        log.debug(f"[Status] Frames processed: {frame_count}, Detections: {detection_count}")
